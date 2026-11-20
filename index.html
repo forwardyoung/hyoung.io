@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#14121f">
-<title>룰렛 돌리기</title>
-<meta name="description" content="항목을 입력하고 룰렛을 돌려보세요.">
+<title>오늘 누가 쏠까?</title>
+<meta name="description" content="참가자 이름을 넣고 룰렛을 돌려 오늘 계산할 사람을 정하세요.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
@@ -117,6 +117,10 @@
 
   .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
   .toolbar .btn { flex: 1 1 auto; font-size: 14px; padding: 10px 12px; }
+  .amount { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--muted); font-size: 14px; }
+  .amount input { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; text-align: right; }
+  .amount input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .card .pay { color: var(--accent); font-weight: 700; margin: -10px 0 22px; font-size: 18px; }
   .opt { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: 14px; cursor: pointer; }
   .opt input { width: 18px; height: 18px; accent-color: var(--accent); }
 
@@ -136,7 +140,7 @@
     animation: pop .35s cubic-bezier(.2,1.6,.4,1);
   }
   .card .label { color: var(--muted); font-size: 14px; }
-  .card .result { font-size: clamp(28px, 9vw, 44px); font-weight: 900; margin: 8px 0 22px; word-break: break-word; }
+  .card .result { font-size: clamp(28px, 9vw, 44px); font-weight: 900; margin: 8px 0 18px; word-break: break-word; }
   .card .actions { display: flex; gap: 8px; }
   .card .actions .btn { flex: 1; }
   @keyframes fade { from { opacity: 0 } }
@@ -148,8 +152,8 @@
 </head>
 <body>
 <header>
-  <h1>🎯 <span>룰렛</span> 돌리기</h1>
-  <p>항목을 넣고 돌려보세요. 점심 메뉴, 벌칙, 당첨자 뽑기까지!</p>
+  <h1>💸 오늘 <span>누가</span> 쏠까?</h1>
+  <p>참가자 이름을 넣고 돌리세요. 걸린 사람이 계산!</p>
 </header>
 
 <main>
@@ -159,22 +163,23 @@
       <canvas id="wheel" width="1040" height="1040" aria-label="룰렛 휠"></canvas>
       <div class="hub" id="hub">GO</div>
     </div>
-    <button class="spin-btn" id="spin">돌리기!</button>
+    <button class="spin-btn" id="spin">누가 낼까? 돌리기!</button>
   </section>
 
   <section class="panel">
-    <h2>항목 <small id="count"></small></h2>
+    <h2>참가자 <small id="count"></small></h2>
     <form class="add-row" id="addForm">
-      <input id="itemInput" placeholder="항목 입력 (쉼표로 여러 개)" maxlength="60" autocomplete="off" enterkeyhint="done">
+      <input id="itemInput" placeholder="이름 입력 (쉼표로 여러 명)" maxlength="60" autocomplete="off" enterkeyhint="done">
       <button class="btn primary" type="submit">추가</button>
     </form>
     <ul class="items" id="items"></ul>
     <div class="toolbar">
       <button class="btn" id="shuffle">🔀 섞기</button>
-      <button class="btn" id="preset">🍱 점심 메뉴</button>
+      <button class="btn" id="reset">↩︎ 처음 상태로</button>
       <button class="btn" id="clear">🗑 전체 삭제</button>
     </div>
-    <label class="opt"><input type="checkbox" id="removeWinner"> 당첨된 항목은 다음 판에서 빼기</label>
+    <label class="amount">💰 금액 (선택)<input id="amount" inputmode="numeric" placeholder="예: 45000" autocomplete="off"></label>
+    <label class="opt"><input type="checkbox" id="removeWinner"> 걸린 사람은 다음 판에서 빼기 (2차, 3차용)</label>
 
     <div class="history">
       <h2>기록</h2>
@@ -187,11 +192,12 @@
 
 <div class="modal" id="modal" role="dialog" aria-modal="true">
   <div class="card">
-    <div class="label">🎉 결과</div>
+    <div class="label">오늘 계산은…</div>
     <div class="result" id="resultText"></div>
+    <div class="pay" id="payText"></div>
     <div class="actions">
       <button class="btn" id="closeModal">닫기</button>
-      <button class="btn primary" id="again">한 번 더</button>
+      <button class="btn primary" id="again">다시 내기</button>
     </div>
   </div>
 </div>
@@ -200,18 +206,18 @@
 <script>
 (() => {
   const COLORS = ["#ff6b7a","#ffcc33","#4dd4ac","#5aa9ff","#b388ff","#ff9f43","#26c6da","#f06292","#9ccc65","#7986cb"];
-  const DEFAULT = ["치킨","피자","짜장면","초밥","햄버거","떡볶이"];
-  const LUNCH = ["김치찌개","된장찌개","제육볶음","돈까스","국밥","냉면","비빔밥","쌀국수","파스타","샐러드"];
-  const KEY = "hyoung-roulette-v1";
+  const DEFAULT = ["철수","영희","민수","지은"];
+  const KEY = "hyoung-whopays-v1";
 
   const $ = id => document.getElementById(id);
   const canvas = $("wheel"), ctx = canvas.getContext("2d");
   const size = canvas.width, R = size / 2;
 
-  let state = { items: DEFAULT.slice(), history: [], removeWinner: false };
+  let state = { items: DEFAULT.slice(), history: [], removeWinner: false, amount: "" };
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.items)) state = { ...state, ...s }; } catch {}
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} };
 
+  const fmt = d => d ? Number(d).toLocaleString("ko-KR") : "";
   let angle = 0;      // current rotation (rad)
   let spinning = false;
 
@@ -231,7 +237,7 @@
       ctx.fillStyle = "#2a2545"; ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
       ctx.fillStyle = "#a19cc0"; ctx.font = "700 44px 'Noto Sans KR', sans-serif";
-      ctx.textAlign = "center"; ctx.fillText("항목을 추가하세요", R, R + R * 0.45);
+      ctx.textAlign = "center"; ctx.fillText("참가자를 추가하세요", R, R + R * 0.45);
       return;
     }
     const seg = Math.PI * 2 / n;
@@ -263,7 +269,7 @@
   function renderList() {
     const ul = $("items"); ul.innerHTML = "";
     const n = state.items.length;
-    if (!n) ul.innerHTML = '<li class="empty">아직 항목이 없어요</li>';
+    if (!n) ul.innerHTML = '<li class="empty">아직 참가자가 없어요</li>';
     state.items.forEach((t, i) => {
       const li = document.createElement("li");
       li.innerHTML = `<span class="dot" style="background:${colorFor(i, n)}"></span><span class="name"></span><button class="del" aria-label="삭제">×</button>`;
@@ -271,11 +277,12 @@
       li.querySelector(".del").onclick = () => { if (spinning) return; state.items.splice(i, 1); update(); };
       ul.appendChild(li);
     });
-    $("count").textContent = `${n}개`;
+    $("count").textContent = `${n}명`;
     $("spin").disabled = n < 2;
     const ol = $("history"); ol.innerHTML = "";
     state.history.slice(0, 20).forEach(h => { const li = document.createElement("li"); li.textContent = h; ol.appendChild(li); });
     $("removeWinner").checked = !!state.removeWinner;
+    if (document.activeElement !== $("amount")) $("amount").value = fmt(state.amount);
   }
 
   function update() { save(); renderList(); draw(); }
@@ -324,9 +331,11 @@
   function finish(i) {
     spinning = false;
     const name = state.items[i];
-    state.history.unshift(name);
+    state.history.unshift(Number(state.amount) ? `${name} (${Number(state.amount).toLocaleString("ko-KR")}원)` : name);
     state.history = state.history.slice(0, 50);
-    $("resultText").textContent = name;
+    $("resultText").textContent = `${name} 님이 쏩니다!`;
+    const amt = Number(state.amount) || 0;
+    $("payText").textContent = amt ? `💳 ${amt.toLocaleString("ko-KR")}원 결제` : "💳 잘 먹겠습니다 🙏";
     $("modal").classList.add("show");
     confetti();
     if (navigator.vibrate) navigator.vibrate([60, 40, 120]);
@@ -376,8 +385,9 @@
     for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
     update();
   };
-  $("preset").onclick = () => { if (spinning) return; state.items = LUNCH.slice(); update(); };
-  $("clear").onclick = () => { if (spinning) return; if (confirm("항목을 모두 지울까요?")) { state.items = []; state.history = []; update(); } };
+  $("reset").onclick = () => { if (spinning) return; state.items = DEFAULT.slice(); update(); };
+  $("amount").oninput = e => { const d = e.target.value.replace(/\D/g, "").slice(0, 10); state.amount = d; e.target.value = fmt(d); save(); };
+  $("clear").onclick = () => { if (spinning) return; if (confirm("참가자를 모두 지울까요?")) { state.items = []; state.history = []; update(); } };
   $("removeWinner").onchange = e => { state.removeWinner = e.target.checked; save(); };
   const close = () => $("modal").classList.remove("show");
   $("closeModal").onclick = close;
