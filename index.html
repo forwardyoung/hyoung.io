@@ -117,9 +117,6 @@
 
   .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
   .toolbar .btn { flex: 1 1 auto; font-size: 14px; padding: 10px 12px; }
-  .amount { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--muted); font-size: 14px; }
-  .amount input { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; text-align: right; }
-  .amount input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .card .pay { color: var(--accent); font-weight: 700; margin: -10px 0 22px; font-size: 18px; }
   .opt { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: 14px; cursor: pointer; }
   .opt input { width: 18px; height: 18px; accent-color: var(--accent); }
@@ -178,7 +175,6 @@
       <button class="btn" id="reset">↩︎ 처음 상태로</button>
       <button class="btn" id="clear">🗑 전체 삭제</button>
     </div>
-    <label class="amount">💰 금액 (선택)<input id="amount" inputmode="numeric" placeholder="예: 45000" autocomplete="off"></label>
     <label class="opt"><input type="checkbox" id="removeWinner"> 걸린 사람은 다음 판에서 빼기 (2차, 3차용)</label>
 
     <div class="history">
@@ -213,11 +209,10 @@
   const canvas = $("wheel"), ctx = canvas.getContext("2d");
   const size = canvas.width, R = size / 2;
 
-  let state = { items: DEFAULT.slice(), history: [], removeWinner: false, amount: "" };
+  let state = { items: DEFAULT.slice(), history: [], removeWinner: false };
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.items)) state = { ...state, ...s }; } catch {}
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} };
 
-  const fmt = d => d ? Number(d).toLocaleString("ko-KR") : "";
   let angle = 0;      // current rotation (rad)
   let spinning = false;
 
@@ -282,7 +277,6 @@
     const ol = $("history"); ol.innerHTML = "";
     state.history.slice(0, 20).forEach(h => { const li = document.createElement("li"); li.textContent = h; ol.appendChild(li); });
     $("removeWinner").checked = !!state.removeWinner;
-    if (document.activeElement !== $("amount")) $("amount").value = fmt(state.amount);
   }
 
   function update() { save(); renderList(); draw(); }
@@ -331,11 +325,10 @@
   function finish(i) {
     spinning = false;
     const name = state.items[i];
-    state.history.unshift(Number(state.amount) ? `${name} (${Number(state.amount).toLocaleString("ko-KR")}원)` : name);
+    state.history.unshift(name);
     state.history = state.history.slice(0, 50);
     $("resultText").textContent = `${name} 님이 쏩니다!`;
-    const amt = Number(state.amount) || 0;
-    $("payText").textContent = amt ? `💳 ${amt.toLocaleString("ko-KR")}원 결제` : "💳 잘 먹겠습니다 🙏";
+    $("payText").textContent = "잘 먹겠습니다 🙏";
     $("modal").classList.add("show");
     confetti();
     if (navigator.vibrate) navigator.vibrate([60, 40, 120]);
@@ -386,7 +379,6 @@
     update();
   };
   $("reset").onclick = () => { if (spinning) return; state.items = DEFAULT.slice(); update(); };
-  $("amount").oninput = e => { const d = e.target.value.replace(/\D/g, "").slice(0, 10); state.amount = d; e.target.value = fmt(d); save(); };
   $("clear").onclick = () => { if (spinning) return; if (confirm("참가자를 모두 지울까요?")) { state.items = []; state.history = []; update(); } };
   $("removeWinner").onchange = e => { state.removeWinner = e.target.checked; save(); };
   const close = () => $("modal").classList.remove("show");
