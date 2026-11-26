@@ -205,7 +205,6 @@
   .led.off { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
   @keyframes pulse { 50% { opacity: .45; } }
   .room-hint { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; line-height: 1.5; }
-  .spin-by { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .toast { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translate(-50%, 20px); opacity: 0;
     background: rgba(20,12,50,.95); border: 1px solid var(--gold2); color: var(--text); padding: 10px 18px; border-radius: 99px;
     font-size: 14px; font-weight: 700; z-index: 20; transition: opacity .25s, transform .25s; pointer-events: none; }
@@ -287,7 +286,6 @@
     <div class="label">오늘 계산은…</div>
     <div class="result" id="resultText"></div>
     <div class="pay" id="payText"></div>
-    <div class="spin-by" id="spinBy"></div>
     <div class="actions">
       <button class="btn" id="closeModal">닫기</button>
       <button class="btn primary" id="again">다시 내기</button>
@@ -592,7 +590,6 @@
       if (spinning) return;
       $("resultText").textContent = `${name} 님이 쏩니다!`;
       $("payText").textContent = "잘 먹겠습니다 🙏";
-      $("spinBy").textContent = room ? (mine ? "내가 돌렸어요" : "다른 사람이 돌렸어요") : "";
       $("modal").classList.add("show");
       confetti();
       celebrate();
