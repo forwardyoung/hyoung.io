@@ -192,6 +192,25 @@
   @keyframes fade { from { opacity: 0 } }
   @keyframes pop { from { transform: scale(.5) rotate(-6deg); opacity: 0 } }
 
+  /* shared room */
+  .room { width: min(100%, 540px); margin-top: -14px; text-align: center; }
+  .room-create { width: 100%; padding: 13px; font-size: 15px; border-style: dashed; border-color: rgba(255,213,74,.45); color: var(--gold1); }
+  .room-on { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .room-on[hidden] { display: none; }
+  .room-on .live { flex: 1 1 100%; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; font-size: 14px;
+    padding: 10px; border-radius: 12px; background: rgba(0,0,0,.3); border: 1px solid var(--glass-line); }
+  .room-on .btn { flex: 1; font-size: 14px; padding: 11px; }
+  .led { width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; box-shadow: 0 0 8px #f59e0b; flex: none; }
+  .led.on { background: #22c55e; box-shadow: 0 0 10px #22c55e; animation: pulse 1.6s ease-in-out infinite; }
+  .led.off { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  .room-hint { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; line-height: 1.5; }
+  .spin-by { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .toast { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translate(-50%, 20px); opacity: 0;
+    background: rgba(20,12,50,.95); border: 1px solid var(--gold2); color: var(--text); padding: 10px 18px; border-radius: 99px;
+    font-size: 14px; font-weight: 700; z-index: 20; transition: opacity .25s, transform .25s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 32px; opacity: .7; letter-spacing: .08em; }
   #confetti { position: fixed; inset: 0; pointer-events: none; z-index: 11; width: 100%; height: 100%; }
 
@@ -227,6 +246,16 @@
       <button class="hub" id="hub" aria-label="돌리기"><span>GO</span></button>
     </div>
     <button class="spin-btn" id="spin">누가 낼까? 돌리기!</button>
+
+    <div class="room" id="roomBar">
+      <button class="btn room-create" id="createRoom">👥 친구랑 같이 보기</button>
+      <div class="room-on" id="roomOn" hidden>
+        <span class="live"><i class="led" id="led"></i><span id="roomStatus">연결 중…</span></span>
+        <button class="btn primary" id="shareRoom">🔗 링크 공유</button>
+        <button class="btn" id="leaveRoom">나가기</button>
+      </div>
+      <p class="room-hint" id="roomHint">방을 만들면 링크가 생겨요. 링크로 들어온 사람은 모두 같은 룰렛을 봐요.<br>누가 돌려도 다 같이 돌아가요.</p>
+    </div>
   </section>
 
   <section class="panel">
@@ -258,6 +287,7 @@
     <div class="label">오늘 계산은…</div>
     <div class="result" id="resultText"></div>
     <div class="pay" id="payText"></div>
+    <div class="spin-by" id="spinBy"></div>
     <div class="actions">
       <button class="btn" id="closeModal">닫기</button>
       <button class="btn primary" id="again">다시 내기</button>
@@ -265,22 +295,41 @@
   </div></div>
 </div>
 <canvas id="confetti"></canvas>
+<div class="toast" id="toast"></div>
 
 <script>
 (() => {
   const COLORS = ["#e11d63","#2563eb","#10b981","#f59e0b","#8b5cf6","#f97316","#0ea5e9","#d946ef","#22c55e","#6366f1"];
   const DEFAULT = ["철수","영희","민수","지은"];
   const KEY = "hyoung-whopays-v1";
+  const BROKER = "wss://broker.emqx.io:8084/mqtt";
+  const MQTT_JS = "https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js";
+  const NS = "hyoung-roulette-v1";
+  const ME = Math.random().toString(36).slice(2, 10);
 
   const $ = id => document.getElementById(id);
   const canvas = $("wheel"), ctx = canvas.getContext("2d");
   const size = canvas.width, R = size / 2;
 
-  let state = { items: DEFAULT.slice(), history: [], removeWinner: false };
-  try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.items)) state = { ...state, ...s }; } catch {}
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} };
+  const blank = () => ({ items: DEFAULT.slice(), history: [], removeWinner: false, rev: 0 });
+  function loadSolo() {
+    let st = blank();
+    try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.items)) st = { ...st, ...s }; } catch {}
+    return st;
+  }
+  let state = loadSolo();
 
-  let angle = 0, spinning = false, highlight = -1, pendingRemove = -1;
+  let angle = 0, spinning = false;
+  let view = null;               // { items, idx } — snapshot shown during/after a spin
+  let room = null, client = null, connected = false, gotState = false;
+  const peers = new Map();
+
+  // ---------- helpers ----------
+  const clean = v => String(v).trim().slice(0, 60);
+  const hasTapped = () => !navigator.userActivation || navigator.userActivation.hasBeenActive;
+  const vib = p => { try { if (navigator.vibrate && hasTapped()) navigator.vibrate(p); } catch {} };
+  let toastT;
+  function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2200); }
 
   // bulbs around the rim
   (() => {
@@ -299,7 +348,7 @@
     if (n > 1 && i === n - 1 && i % COLORS.length === 0) c = COLORS[(i + 3) % COLORS.length];
     return c;
   }
-  function shade(hex, amt) { // amt -1..1
+  function shade(hex, amt) {
     const n = parseInt(hex.slice(1), 16);
     let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
     const t = amt < 0 ? 0 : 255, p = Math.abs(amt);
@@ -307,8 +356,10 @@
     return `rgb(${r},${g},${b})`;
   }
 
+  // ---------- drawing ----------
   function draw() {
-    const items = state.items, n = items.length;
+    const items = view ? view.items : state.items, n = items.length;
+    const hi = view ? view.idx : -1;
     ctx.clearRect(0, 0, size, size);
     ctx.save();
     ctx.translate(R, R);
@@ -327,14 +378,11 @@
       const start = -Math.PI / 2 + i * seg - seg / 2;
       const col = colorFor(i, n);
       const g = ctx.createRadialGradient(0, 0, R * 0.12, 0, 0, R);
-      g.addColorStop(0, shade(col, 0.45));
-      g.addColorStop(0.55, col);
-      g.addColorStop(1, shade(col, -0.35));
+      g.addColorStop(0, shade(col, 0.45)); g.addColorStop(0.55, col); g.addColorStop(1, shade(col, -0.35));
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, R, start, start + seg); ctx.closePath();
       ctx.fillStyle = g; ctx.fill();
-      if (highlight >= 0 && i !== highlight) { ctx.fillStyle = "rgba(10,5,25,.62)"; ctx.fill(); }
+      if (hi >= 0 && i !== hi) { ctx.fillStyle = "rgba(10,5,25,.62)"; ctx.fill(); }
 
-      // label
       ctx.save();
       ctx.rotate(start + seg / 2);
       ctx.textAlign = "right"; ctx.textBaseline = "middle";
@@ -345,26 +393,24 @@
       while (ctx.measureText(label).width > maxW && label.length > 1) label = label.slice(0, -1);
       if (label !== items[i]) label = label.slice(0, -1) + "…";
       ctx.shadowColor = "rgba(0,0,0,.55)"; ctx.shadowBlur = 8; ctx.shadowOffsetY = 3;
-      ctx.fillStyle = (highlight >= 0 && i !== highlight) ? "rgba(255,255,255,.45)" : "#fff";
+      ctx.fillStyle = (hi >= 0 && i !== hi) ? "rgba(255,255,255,.45)" : "#fff";
       ctx.fillText(label, R - 44, 0);
       ctx.restore();
     }
-    // gold separators
     ctx.lineCap = "round";
     for (let i = 0; i < n; i++) {
-      const a = -Math.PI / 2 + i * seg - seg / 2;
-      ctx.beginPath(); ctx.moveTo(Math.cos(a) * R * 0.2, Math.sin(a) * R * 0.2); ctx.lineTo(Math.cos(a) * R, Math.sin(a) * R);
+      const a = -Math.PI / 2 + i * seg - seg / 2, cx = Math.cos(a), sy = Math.sin(a);
+      ctx.beginPath(); ctx.moveTo(cx * R * 0.2, sy * R * 0.2); ctx.lineTo(cx * R, sy * R);
       ctx.strokeStyle = "#6b3d00"; ctx.lineWidth = 9; ctx.stroke();
       ctx.strokeStyle = "#ffd54a"; ctx.lineWidth = 4; ctx.stroke();
-      // stud
-      ctx.beginPath(); ctx.arc(Math.cos(a) * R * 0.93, Math.sin(a) * R * 0.93, 11, 0, Math.PI * 2);
-      const sg = ctx.createRadialGradient(Math.cos(a) * R * 0.93 - 3, Math.sin(a) * R * 0.93 - 3, 1, Math.cos(a) * R * 0.93, Math.sin(a) * R * 0.93, 11);
+      const px = cx * R * 0.93, py = sy * R * 0.93;
+      ctx.beginPath(); ctx.arc(px, py, 11, 0, Math.PI * 2);
+      const sg = ctx.createRadialGradient(px - 3, py - 3, 1, px, py, 11);
       sg.addColorStop(0, "#fff8d0"); sg.addColorStop(1, "#c88a00");
       ctx.fillStyle = sg; ctx.fill();
     }
-    // winner ring
-    if (highlight >= 0) {
-      const start = -Math.PI / 2 + highlight * seg - seg / 2;
+    if (hi >= 0) {
+      const start = -Math.PI / 2 + hi * seg - seg / 2;
       ctx.beginPath(); ctx.arc(0, 0, R - 8, start, start + seg);
       ctx.strokeStyle = "#fff3b0"; ctx.lineWidth = 14; ctx.shadowColor = "#ffd54a"; ctx.shadowBlur = 30; ctx.stroke();
     }
@@ -380,39 +426,118 @@
       const c = colorFor(i, n);
       li.innerHTML = `<span class="dot" style="background:${c};color:${c}"></span><span class="name"></span><button class="del" aria-label="삭제">×</button>`;
       li.querySelector(".name").textContent = t;
-      li.querySelector(".del").onclick = () => { if (spinning) return; state.items.splice(i, 1); update(); };
+      li.querySelector(".del").onclick = edit(() => state.items.splice(i, 1));
       ul.appendChild(li);
     });
     $("count").textContent = `${n}명`;
-    $("spin").disabled = n < 2;
+    $("spin").disabled = n < 2 || spinning;
     const ol = $("history"); ol.innerHTML = "";
     state.history.slice(0, 20).forEach(h => { const li = document.createElement("li"); li.textContent = h; ol.appendChild(li); });
     $("removeWinner").checked = !!state.removeWinner;
   }
+  function render() { renderList(); draw(); }
 
-  function update() { save(); renderList(); draw(); }
+  // local change → save / broadcast
+  function commit() {
+    state.rev = Date.now();
+    if (!room) { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} }
+    render();
+    publishState();
+  }
+  function clearView() { view = null; $("wheelBox").classList.remove("won"); }
+  const edit = fn => () => { if (spinning) return; clearView(); fn(); commit(); };
 
-  // ---- sound ----
+  // ---------- sound ----------
   let audioCtx;
-  function beep(freq, dur, vol, type = "square") {
+  function ac() {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+  document.addEventListener("pointerdown", () => { try { ac(); } catch {} }, { once: true });
+  function beep(freq, dur, vol, type = "square", when = 0) {
     try {
-      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      const o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = audioCtx.currentTime;
+      const a = ac(), o = a.createOscillator(), g = a.createGain(), t = a.currentTime + when;
       o.frequency.value = freq; o.type = type;
       g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t + dur + 0.01);
+      o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.01);
     } catch {}
   }
   const tick = () => beep(1400, 0.035, 0.035);
-  const fanfare = () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, i === 3 ? 0.45 : 0.14, 0.06, "triangle"), i * 110));
+  const fanfare = () => [523, 659, 784, 1047].forEach((f, i) => beep(f, i === 3 ? 0.45 : 0.14, 0.06, "triangle", i * 0.11));
 
-  // ---- spin ----
+  let noiseBuf;
+  function noise(a) {
+    if (noiseBuf) return noiseBuf;
+    noiseBuf = a.createBuffer(1, a.sampleRate * 2, a.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    return noiseBuf;
+  }
+  // applause + crowd cheer + whistles, all synthesized
+  function celebrate() {
+    try {
+      const a = ac(), t0 = a.currentTime + 0.05, buf = noise(a);
+      const master = a.createGain(); master.gain.value = 0.9; master.connect(a.destination);
+
+      // claps: many short filtered noise bursts, dense then thinning out
+      const DUR = 3.2;
+      for (let k = 0; k < 170; k++) {
+        const u = Math.pow(Math.random(), 1.6);              // more claps early
+        const t = t0 + u * DUR;
+        const src = a.createBufferSource(); src.buffer = buf;
+        const bp = a.createBiquadFilter(); bp.type = "bandpass";
+        bp.frequency.value = 900 + Math.random() * 1600; bp.Q.value = 0.9 + Math.random();
+        const g = a.createGain();
+        const v = (0.10 + Math.random() * 0.14) * (1 - u * 0.75);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(v, t + 0.003);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05 + Math.random() * 0.05);
+        src.connect(bp).connect(g).connect(master);
+        src.start(t, Math.random() * 1.5, 0.12);
+      }
+
+      // crowd roar: band-passed noise swelling up then fading
+      const roar = a.createBufferSource(); roar.buffer = buf; roar.loop = true;
+      const lp = a.createBiquadFilter(); lp.type = "bandpass"; lp.frequency.value = 1100; lp.Q.value = 0.6;
+      const rg = a.createGain();
+      rg.gain.setValueAtTime(0.0001, t0);
+      rg.gain.exponentialRampToValueAtTime(0.12, t0 + 0.35);
+      rg.gain.setValueAtTime(0.12, t0 + 1.4);
+      rg.gain.exponentialRampToValueAtTime(0.0001, t0 + DUR + 0.4);
+      lp.frequency.setValueAtTime(800, t0); lp.frequency.linearRampToValueAtTime(1500, t0 + 0.6); lp.frequency.linearRampToValueAtTime(900, t0 + DUR);
+      roar.connect(lp).connect(rg).connect(master);
+      roar.start(t0); roar.stop(t0 + DUR + 0.5);
+
+      // "woo!" voices: vibrato'd saw glides through a formant filter
+      [[0.15, 320, 520], [0.3, 380, 600], [0.55, 290, 470], [0.9, 340, 560]].forEach(([d, f1, f2]) => {
+        const t = t0 + d, o = a.createOscillator(), lfo = a.createOscillator(), lg = a.createGain();
+        const f = a.createBiquadFilter(), g = a.createGain();
+        o.type = "sawtooth"; f.type = "bandpass"; f.frequency.value = 900; f.Q.value = 3;
+        o.frequency.setValueAtTime(f1, t); o.frequency.exponentialRampToValueAtTime(f2, t + 0.25); o.frequency.exponentialRampToValueAtTime(f2 * 0.8, t + 0.9);
+        lfo.frequency.value = 6; lg.gain.value = 12; lfo.connect(lg).connect(o.frequency);
+        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.035, t + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.95);
+        o.connect(f).connect(g).connect(master);
+        o.start(t); lfo.start(t); o.stop(t + 1); lfo.stop(t + 1);
+      });
+
+      // whistles
+      [[0.25, 2000, 2900], [0.7, 2300, 3200]].forEach(([d, f1, f2]) => {
+        const t = t0 + d, o = a.createOscillator(), g = a.createGain();
+        o.type = "sine";
+        o.frequency.setValueAtTime(f1, t); o.frequency.exponentialRampToValueAtTime(f2, t + 0.35); o.frequency.setValueAtTime(f2, t + 0.5);
+        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05, t + 0.05);
+        g.gain.setValueAtTime(0.05, t + 0.45); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+        o.connect(g).connect(master); o.start(t); o.stop(t + 0.65);
+      });
+    } catch {}
+  }
+
+  // ---------- spin ----------
   function spin() {
-    commitRemoval();
     const n = state.items.length;
     if (spinning || n < 2) return;
-    spinning = true; highlight = -1; $("spin").disabled = true;
-    $("wheelBox").classList.remove("won"); $("wheelBox").classList.add("spinning");
+    closeModal();
     const seg = Math.PI * 2 / n;
     const winner = Math.floor(Math.random() * n);
     const jitter = (Math.random() - 0.5) * seg * 0.8;
@@ -420,46 +545,61 @@
     const cur = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
     let delta = ((base - cur) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
     delta += Math.PI * 2 * (6 + Math.floor(Math.random() * 3));
-    const start = angle, dur = 5200 + Math.random() * 1200, t0 = performance.now();
+    const m = { from: ME, id: ME + Date.now(), items: state.items.slice(), startAngle: angle, delta, dur: 5200 + Math.random() * 1200, winner };
+    if (client && connected) client.publish(`${NS}/${room}/spin`, JSON.stringify(m), { qos: 1 });
+    runSpin(m, true);
+  }
+
+  function runSpin(m, mine) {
+    spinning = true;
+    closeModal();
+    view = { items: m.items, idx: -1 };
+    $("wheelBox").classList.remove("won"); $("wheelBox").classList.add("spinning");
+    renderList();
+    const n = m.items.length, seg = Math.PI * 2 / n;
+    const start = m.startAngle, t0 = performance.now();
     const ease = t => 1 - Math.pow(1 - t, 4);
     let lastSeg = Math.floor((start + seg / 2) / seg);
-
     function frame(now) {
-      const t = Math.min(1, (now - t0) / dur);
-      angle = start + delta * ease(t);
+      const t = Math.min(1, (now - t0) / m.dur);
+      angle = start + m.delta * ease(t);
       const s = Math.floor((angle + seg / 2) / seg);
-      if (s !== lastSeg) { lastSeg = s; tick(); if (navigator.vibrate) navigator.vibrate(4); }
+      if (s !== lastSeg) { lastSeg = s; tick(); vib(4); }
       draw();
       if (t < 1) requestAnimationFrame(frame);
-      else finish(winner);
+      else finish(m, mine);
     }
     requestAnimationFrame(frame);
   }
 
-  function finish(i) {
+  function finish(m, mine) {
     spinning = false;
     $("wheelBox").classList.remove("spinning"); $("wheelBox").classList.add("won");
-    highlight = i; draw();
-    const name = state.items[i];
-    state.history.unshift(name);
-    state.history = state.history.slice(0, 50);
-    if (state.removeWinner) pendingRemove = i;
-    update();
+    view.idx = m.winner;
+    const name = m.items[m.winner];
+    if (mine) {   // only the spinner updates the shared state
+      state.history.unshift(name);
+      state.history = state.history.slice(0, 50);
+      if (state.removeWinner) {
+        const k = state.items[m.winner] === name ? m.winner : state.items.indexOf(name);
+        if (k >= 0) state.items.splice(k, 1);
+      }
+      commit();
+    } else render();
     fanfare();
-    if (navigator.vibrate) navigator.vibrate([60, 40, 120]);
+    vib([60, 40, 120]);
     setTimeout(() => {
+      if (spinning) return;
       $("resultText").textContent = `${name} 님이 쏩니다!`;
       $("payText").textContent = "잘 먹겠습니다 🙏";
+      $("spinBy").textContent = room ? (mine ? "내가 돌렸어요" : "다른 사람이 돌렸어요") : "";
       $("modal").classList.add("show");
       confetti();
+      celebrate();
     }, 650);
   }
 
-  function commitRemoval() {
-    if (pendingRemove >= 0) { state.items.splice(pendingRemove, 1); pendingRemove = -1; highlight = -1; update(); }
-  }
-
-  // ---- confetti ----
+  // ---------- confetti ----------
   function confetti() {
     const c = $("confetti"), x = c.getContext("2d");
     const dpr = window.devicePixelRatio || 1;
@@ -485,38 +625,143 @@
     })(t0);
   }
 
-  // ---- events ----
+  // ---------- shared room (MQTT over WebSocket) ----------
+  const roomFromHash = () => { const m = location.hash.match(/r=([a-z0-9]{4,12})/); return m ? m[1] : null; };
+  const newRoomId = () => Array.from({ length: 6 }, () => "abcdefghjkmnpqrstuvwxyz23456789"[Math.floor(Math.random() * 31)]).join("");
+  const roomUrl = () => `${location.origin}${location.pathname}#r=${room}`;
+
+  function publishState() {
+    if (!room || !client || !connected) return;
+    const { items, history, removeWinner, rev } = state;
+    client.publish(`${NS}/${room}/state`, JSON.stringify({ items, history, removeWinner, rev, from: ME }), { qos: 1, retain: true });
+  }
+  function loadMqtt() {
+    return new Promise((res, rej) => {
+      if (window.mqtt) return res();
+      const s = document.createElement("script");
+      s.src = MQTT_JS; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+  function roomUI() {
+    const on = !!room;
+    $("createRoom").hidden = on; $("roomOn").hidden = !on;
+    $("roomHint").innerHTML = on
+      ? "이 링크를 받은 사람은 모두 같은 룰렛을 봐요.<br>누가 돌려도 다 같이 돌아가요."
+      : "방을 만들면 링크가 생겨요. 링크로 들어온 사람은 모두 같은 룰렛을 봐요.<br>누가 돌려도 다 같이 돌아가요.";
+    if (!on) return;
+    const now = Date.now();
+    for (const [id, t] of peers) if (now - t > 25000) peers.delete(id);
+    const led = $("led");
+    led.className = "led " + (connected ? "on" : "");
+    $("roomStatus").textContent = connected
+      ? `방 ${room.toUpperCase()} · ${peers.size + 1}명 접속 중`
+      : `방 ${room.toUpperCase()} · 연결 중…`;
+  }
+
+  async function joinRoom(id, isNew) {
+    room = id;
+    if (location.hash !== `#r=${id}`) history.replaceState(null, "", `#r=${id}`);
+    if (!isNew) { state = { items: [], history: [], removeWinner: false, rev: 0 }; render(); }
+    roomUI();
+    try { await loadMqtt(); } catch { toast("연결 실패. 새로고침 해주세요"); $("led").className = "led off"; return; }
+    client = mqtt.connect(BROKER, { clientId: "hr_" + ME, clean: true, reconnectPeriod: 2000, connectTimeout: 10000, keepalive: 30 });
+    client.on("connect", () => {
+      connected = true;
+      client.subscribe(`${NS}/${room}/#`, { qos: 1 });
+      ping(); roomUI();
+      // new room, or nobody has published yet → seed it with what we have
+      setTimeout(() => {
+        if (!gotState) {
+          if (!state.items.length && !isNew) state = blank();
+          state.rev = Date.now(); render(); publishState();
+        }
+      }, isNew ? 300 : 2500);
+    });
+    client.on("message", (topic, buf) => {
+      let m; try { m = JSON.parse(buf.toString()); } catch { return; }
+      if (!m || m.from === ME) { if (topic.endsWith("/state")) gotState = true; return; }
+      const kind = topic.slice(topic.lastIndexOf("/") + 1);
+      if (kind === "state") {
+        if (!Array.isArray(m.items)) return;
+        gotState = true;
+        state = {
+          items: m.items.slice(0, 40).map(clean).filter(Boolean),
+          history: (Array.isArray(m.history) ? m.history : []).slice(0, 50).map(clean),
+          removeWinner: !!m.removeWinner, rev: +m.rev || 0
+        };
+        if (!spinning && !(view && view.idx >= 0)) clearView();
+        render();
+      } else if (kind === "spin") {
+        if (spinning || !Array.isArray(m.items) || m.items.length < 2) return;
+        const items = m.items.slice(0, 40).map(clean);
+        const winner = m.winner | 0;
+        if (winner < 0 || winner >= items.length) return;
+        runSpin({ items, winner, startAngle: +m.startAngle || 0, delta: +m.delta || 0, dur: Math.min(9000, Math.max(1000, +m.dur || 5000)) }, false);
+      } else if (kind === "presence") {
+        if (m.bye) peers.delete(m.from); else peers.set(String(m.from), Date.now());
+        roomUI();
+      }
+    });
+    client.on("offline", () => { connected = false; roomUI(); });
+    client.on("close", () => { connected = false; roomUI(); });
+    client.on("reconnect", () => roomUI());
+  }
+  function ping() { if (client && connected) client.publish(`${NS}/${room}/presence`, JSON.stringify({ from: ME })); }
+  setInterval(() => { ping(); roomUI(); }, 8000);
+
+  function leaveRoom() {
+    if (client) { try { client.publish(`${NS}/${room}/presence`, JSON.stringify({ from: ME, bye: true })); client.end(); } catch {} }
+    client = null; connected = false; gotState = false; room = null; peers.clear();
+    history.replaceState(null, "", location.pathname);
+    clearView(); state = loadSolo(); render(); roomUI();
+  }
+  window.addEventListener("pagehide", () => { if (client && connected) client.publish(`${NS}/${room}/presence`, JSON.stringify({ from: ME, bye: true })); });
+  window.addEventListener("hashchange", () => { const r = roomFromHash(); if (r !== room) location.reload(); });
+
+  async function share() {
+    const url = roomUrl();
+    if (navigator.share) { try { await navigator.share({ title: "오늘 누가 쏠까?", text: "룰렛 같이 보자!", url }); return; } catch (e) { if (e.name === "AbortError") return; } }
+    try { await navigator.clipboard.writeText(url); toast("링크 복사됨! 친구한테 보내세요"); }
+    catch { prompt("이 링크를 복사해서 보내세요", url); }
+  }
+
+  // ---------- events ----------
   $("spin").onclick = spin;
   $("hub").onclick = spin;
   $("addForm").onsubmit = e => {
     e.preventDefault();
     if (spinning) return;
-    commitRemoval();
-    const v = $("itemInput").value.split(",").map(s => s.trim()).filter(Boolean);
+    const v = $("itemInput").value.split(",").map(clean).filter(Boolean);
     if (!v.length) return;
-    highlight = -1; $("wheelBox").classList.remove("won");
-    state.items.push(...v.map(s => s.slice(0, 60)));
+    clearView();
+    state.items.push(...v);
     state.items = state.items.slice(0, 40);
     $("itemInput").value = "";
-    update();
+    commit();
   };
-  const guard = fn => () => { if (spinning) return; commitRemoval(); highlight = -1; $("wheelBox").classList.remove("won"); fn(); };
-  $("shuffle").onclick = guard(() => {
+  $("shuffle").onclick = edit(() => {
     const a = state.items;
     for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
-    update();
   });
-  $("reset").onclick = guard(() => { state.items = DEFAULT.slice(); update(); });
-  $("clear").onclick = guard(() => { if (confirm("참가자를 모두 지울까요?")) { state.items = []; state.history = []; update(); } });
-  $("removeWinner").onchange = e => { state.removeWinner = e.target.checked; save(); };
-  const close = () => { $("modal").classList.remove("show"); commitRemoval(); };
+  $("reset").onclick = edit(() => { state.items = DEFAULT.slice(); });
+  $("clear").onclick = () => { if (spinning || !confirm("참가자를 모두 지울까요?")) return; edit(() => { state.items = []; state.history = []; })(); };
+  $("removeWinner").onchange = e => { state.removeWinner = e.target.checked; commit(); };
+  function closeModal() { $("modal").classList.remove("show"); }
+  const close = () => { closeModal(); if (!spinning) { clearView(); draw(); } };
   $("closeModal").onclick = close;
   $("modal").onclick = e => { if (e.target.id === "modal") close(); };
   $("again").onclick = () => { close(); setTimeout(spin, 150); };
   document.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
 
-  update();
+  $("createRoom").onclick = () => { joinRoom(newRoomId(), true); share(); };
+  $("shareRoom").onclick = share;
+  $("leaveRoom").onclick = () => { if (confirm("방에서 나갈까요?")) leaveRoom(); };
+
+  render(); roomUI();
   if (document.fonts) document.fonts.ready.then(draw);
+  const r = roomFromHash();
+  if (r) joinRoom(r, false);
 })();
 </script>
 </body>
