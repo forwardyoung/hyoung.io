@@ -261,7 +261,7 @@
         <button class="btn primary" id="shareRoom">🔗 링크 공유</button>
         <button class="btn" id="leaveRoom">나가기</button>
       </div>
-      <p class="room-hint" id="roomHint">방을 만들면 링크가 생겨요. 링크로 들어온 사람은 모두 같은 룰렛을 봐요.</p>
+      <p class="room-hint" id="roomHint">방을 만들면 링크가 생겨요.<br>링크로 들어온 사람은 모두 같은 룰렛을 봐요.</p>
     </div>
   </section>
 
@@ -663,7 +663,7 @@
     $("createRoom").hidden = on; $("roomOn").hidden = !on;
     $("roomHint").innerHTML = on
       ? "이 링크를 받은 사람은 모두 같은 룰렛을 봐요."
-      : "방을 만들면 링크가 생겨요. 링크로 들어온 사람은 모두 같은 룰렛을 봐요.";
+      : "방을 만들면 링크가 생겨요.<br>링크로 들어온 사람은 모두 같은 룰렛을 봐요.";
     if (!on) return;
     const now = Date.now();
     for (const [id, t] of peers) if (now - t > 25000) peers.delete(id);
