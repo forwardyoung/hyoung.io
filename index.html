@@ -170,7 +170,7 @@
   .mini:hover { color: var(--danger); border-color: rgba(255,107,138,.5); }
   .mini[hidden] { display: none; }
   .history ol { margin: 0; padding-left: 22px; color: var(--muted); font-size: 14px; display: grid; gap: 4px; max-height: 160px; overflow-y: auto; }
-  .history ol li:first-child { color: var(--gold2); font-weight: 700; }
+  .history ol li:last-child { color: var(--gold2); font-weight: 700; }
   .history ol:empty::before { content: "아직 기록이 없어요"; margin-left: -22px; font-size: 13px; }
 
   /* result modal */
@@ -447,7 +447,8 @@
     $("count").textContent = `${n}명`;
     $("spin").disabled = n < 2 || spinning;
     const ol = $("history"); ol.innerHTML = "";
-    state.history.slice(0, 20).forEach(h => { const li = document.createElement("li"); li.textContent = h; ol.appendChild(li); });
+    state.history.slice(0, 20).reverse().forEach(h => { const li = document.createElement("li"); li.textContent = h; ol.appendChild(li); });
+    ol.scrollTop = ol.scrollHeight;
     $("removeWinner").checked = !!state.removeWinner;
     $("clearHistory").hidden = !state.history.length;
   }
