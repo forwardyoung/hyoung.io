@@ -112,6 +112,11 @@
     filter: drop-shadow(0 2px 0 #3a1f00); }
   .hub:hover { transform: scale(1.05); }
   .hub:active { transform: scale(.94); }
+  .hub:not(:disabled) { animation: hubglow 1.8s ease-in-out infinite; }
+  @keyframes hubglow { 50% { box-shadow: 0 0 0 5px var(--gold2), 0 0 0 8px var(--gold4), 0 0 28px 10px rgba(255,213,74,.55), inset 0 -6px 14px rgba(0,0,0,.6), inset 0 4px 10px rgba(255,255,255,.18); } }
+  .wheel.spinning .hub { animation: none; }
+  .hub:disabled { cursor: not-allowed; filter: grayscale(.6) brightness(.75); }
+  .hub:disabled:hover { transform: none; }
 
   .spin-btn { position: relative; overflow: hidden;
     width: min(100%, 540px); padding: 18px; border: 0; border-radius: 18px;
@@ -197,7 +202,7 @@
   @keyframes pop { from { transform: scale(.5) rotate(-6deg); opacity: 0 } }
 
   /* shared room */
-  .room { width: min(100%, 540px); margin-top: -14px; text-align: center; }
+  .room { width: min(100%, 540px); margin-top: 0; text-align: center; }
   .room-create { width: 100%; padding: 13px; font-size: 15px; border-style: dashed; border-color: rgba(255,213,74,.45); color: var(--gold1); }
   .room-on { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .room-on[hidden] { display: none; }
@@ -252,7 +257,6 @@
       </svg>
       <button class="hub" id="hub" aria-label="돌리기"><span>GO</span></button>
     </div>
-    <button class="spin-btn" id="spin">누가 낼까? 돌리기!</button>
 
     <div class="room" id="roomBar">
       <button class="btn room-create" id="createRoom">👥 친구랑 같이 보기</button>
@@ -445,7 +449,7 @@
       ul.appendChild(li);
     });
     $("count").textContent = `${n}명`;
-    $("spin").disabled = n < 2 || spinning;
+    $("hub").disabled = n < 2 || spinning;
     const ol = $("history"); ol.innerHTML = "";
     state.history.slice(0, 20).reverse().forEach(h => { const li = document.createElement("li"); li.textContent = h; ol.appendChild(li); });
     ol.scrollTop = ol.scrollHeight;
@@ -743,7 +747,6 @@
   }
 
   // ---------- events ----------
-  $("spin").onclick = spin;
   $("hub").onclick = spin;
   $("addForm").onsubmit = e => {
     e.preventDefault();
