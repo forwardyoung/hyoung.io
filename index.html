@@ -214,6 +214,10 @@
     font-size: 14px; font-weight: 700; z-index: 20; transition: opacity .25s, transform .25s; pointer-events: none; }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+  .ask-card { width: min(100%, 340px); animation: pop .3s cubic-bezier(.2,1.4,.4,1); }
+  .ask-text { font-size: 18px; font-weight: 700; margin: 4px 0 22px; line-height: 1.5; }
+  #ask { z-index: 30; }
+
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 32px; opacity: .7; letter-spacing: .08em; }
   #confetti { position: fixed; inset: 0; pointer-events: none; z-index: 11; width: 100%; height: 100%; }
 
@@ -293,6 +297,15 @@
     <div class="actions">
       <button class="btn" id="closeModal">닫기</button>
       <button class="btn primary" id="again">다시 내기</button>
+    </div>
+  </div></div>
+</div>
+<div class="modal" id="ask" role="alertdialog" aria-modal="true">
+  <div class="card ask-card"><div class="card-in">
+    <div class="ask-text" id="askText"></div>
+    <div class="actions">
+      <button class="btn" id="askNo">취소</button>
+      <button class="btn primary" id="askYes">확인</button>
     </div>
   </div></div>
 </div>
@@ -725,7 +738,7 @@
     const url = roomUrl();
     if (navigator.share) { try { await navigator.share({ title: "오늘 누가 쏠까?", text: "룰렛 같이 보자!", url }); return; } catch (e) { if (e.name === "AbortError") return; } }
     try { await navigator.clipboard.writeText(url); toast("링크 복사됨! 친구한테 보내세요"); }
-    catch { prompt("이 링크를 복사해서 보내세요", url); }
+    catch { ask(`이 링크를 복사해서 보내세요<br><small style="word-break:break-all;color:var(--gold2)">${url}</small>`); }
   }
 
   // ---------- events ----------
@@ -747,19 +760,29 @@
     for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
   });
   $("reset").onclick = edit(() => { state.items = DEFAULT.slice(); });
-  $("clear").onclick = () => { if (spinning || !confirm("참가자를 모두 지울까요?")) return; edit(() => { state.items = []; state.history = []; })(); };
-  $("clearHistory").onclick = () => { if (spinning || !state.history.length || !confirm("기록을 모두 지울까요?")) return; state.history = []; commit(); };
+  $("clear").onclick = async () => { if (spinning || !(await ask("참가자와 기록을 모두 지울까요?"))) return; edit(() => { state.items = []; state.history = []; })(); };
+  $("clearHistory").onclick = async () => { if (spinning || !state.history.length || !(await ask("기록을 모두 지울까요?"))) return; state.history = []; commit(); };
   $("removeWinner").onchange = e => { state.removeWinner = e.target.checked; commit(); };
+  // in-page confirm box (the browser's own popup can be blocked)
+  let askDone = null;
+  function ask(html) {
+    $("askText").innerHTML = html;
+    $("ask").classList.add("show");
+    return new Promise(res => { askDone = v => { $("ask").classList.remove("show"); askDone = null; res(v); }; });
+  }
+  $("askYes").onclick = () => askDone && askDone(true);
+  $("askNo").onclick = () => askDone && askDone(false);
+  $("ask").onclick = e => { if (e.target.id === "ask" && askDone) askDone(false); };
   function closeModal() { $("modal").classList.remove("show"); }
   const close = () => { closeModal(); if (!spinning) { clearView(); draw(); } };
   $("closeModal").onclick = close;
   $("modal").onclick = e => { if (e.target.id === "modal") close(); };
   $("again").onclick = () => { close(); setTimeout(spin, 150); };
-  document.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+  document.addEventListener("keydown", e => { if (e.key !== "Escape") return; if (askDone) askDone(false); else close(); });
 
   $("createRoom").onclick = () => { joinRoom(newRoomId(), true); share(); };
   $("shareRoom").onclick = share;
-  $("leaveRoom").onclick = () => { if (confirm("방에서 나갈까요?")) leaveRoom(); };
+  $("leaveRoom").onclick = async () => { if (await ask("방에서 나갈까요?<br><small style=\"color:var(--muted);font-weight:400\">링크로 다시 들어올 수 있어요</small>")) { leaveRoom(); toast("방에서 나왔어요"); } };
 
   render(); roomUI();
   if (document.fonts) document.fonts.ready.then(draw);
